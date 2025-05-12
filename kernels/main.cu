@@ -4,8 +4,8 @@
 
 //#define DEBUG
 #define BLOCKSIZE 16 //16 or 32
-__constant__ float d_param_ref[39];
-__constant__ float d_param_cam[39];
+__constant__ float d_param_ref[21];
+__constant__ float d_param_cam[54]; //18*3=54
 
 // Those functions are an example on how to call cuda functions from the main.cpp
 __global__ void dev_test_vecAdd(int* A, int* B, int* C, int N)
@@ -86,35 +86,47 @@ void convertHalfToFloat(const __half* input, float* output, int size) {
 	}
 }
 
-float* get_params_cam(cam const camera) {
-	float* params = (float*)malloc(sizeof(float) * 39);
-	// Copy the camera parameters into the array
-	int index = 0;
-	// K_inv
-	for (int i = 0; i < 9; ++i) {
-		params[index++] = (float)camera.p.K_inv[i];
+float* get_params_cam(const cam camera, const int is_ref, std::vector<cam> const& cam_vector) {
+	if (is_ref) {
+		// Copy the camera parameters into the array
+		float* params = (float*)malloc(sizeof(float) * 21);
+		int index = 0;
+		// K_inv
+		for (int i = 0; i < 9; ++i) {
+			params[index++] = (float)camera.p.K_inv[i];
+		}
+		// R_inv
+		for (int i = 0; i < 9; ++i) {
+			params[index++] = (float)camera.p.R_inv[i];
+		}
+		// t_inv
+		for (int i = 0; i < 3; ++i) {
+			params[index++] = (float)camera.p.t_inv[i];
+		}
+		return params;
 	}
-	// R_inv
-	for (int i = 0; i < 9; ++i) {
-		params[index++] = (float)camera.p.R_inv[i];
+	else {
+		float* params = (float*)malloc(sizeof(float) * 18 * 3);
+		int index = 0;
+		for (auto& cam : cam_vector)
+		{
+			if (cam.name == camera.name)
+				continue;
+			// R
+			for (int i = 0; i < 9; ++i) {
+				params[index++] = (float)cam.p.R[i];
+			}
+			// t
+			for (int i = 0; i < 3; ++i) {
+				params[index++] = (float)cam.p.t[i];
+			}
+			// K
+			for (int i = 0; i < 6; ++i) {
+				params[index++] = (float)cam.p.K[i];
+			}
+		}
+		return params;
 	}
-	// t_inv
-	for (int i = 0; i < 3; ++i) {
-		params[index++] = (float)camera.p.t_inv[i];
-	}
-	// R
-	for (int i = 0; i < 9; ++i) {
-		params[index++] = (float)camera.p.R[i];
-	}
-	// t
-	for (int i = 0; i < 3; ++i) {
-		params[index++] = (float)camera.p.t[i];
-	}
-	// K
-	for (int i = 0; i < 6; ++i) {
-		params[index++] = (float)camera.p.K[i];
-	}
-	return params;
 }
 
 __global__ void naive_sweeping_plane_kernel(
@@ -198,6 +210,7 @@ __global__ void params_sweeping_plane_kernel(
 	const uint8_t* im_ref,
 	const uint8_t* im_cam,
 	__half* cost_volume, //was float
+	const int cam_nb,
 	const unsigned int width, const unsigned int height,
 	int z_planes,
 	int window)
@@ -209,6 +222,7 @@ __global__ void params_sweeping_plane_kernel(
 	if (x >= width || y >= height || zi >= z_planes) //handle threads/blocks out of bounds
 		return;
 	// (1) compute the projection index
+	int cam_index = (cam_nb * 18); //18*3=54
 	float z = 0.3f * 1.1f / (0.3f + ((float)zi / z_planes) * (1.1f - 0.3f)); //Defined in constants.hpp
 
 	// 2D ref camera point to 3D in ref camera coordinates (p * K_inv)
@@ -222,13 +236,13 @@ __global__ void params_sweeping_plane_kernel(
 	float Z = d_param_ref[15] * X_ref + d_param_ref[16] * Y_ref + d_param_ref[17] * Z_ref - d_param_ref[20];
 
 	// 3D world to projected camera 3D coordinates
-	float X_proj = d_param_cam[21] * X + d_param_cam[22] * Y + d_param_cam[23] * Z - d_param_cam[30];
-	float Y_proj = d_param_cam[24] * X + d_param_cam[25] * Y + d_param_cam[26] * Z - d_param_cam[31];
-	float Z_proj = d_param_cam[27] * X + d_param_cam[28] * Y + d_param_cam[29] * Z - d_param_cam[32];
+	float X_proj = d_param_cam[0 + cam_index] * X + d_param_cam[1 + cam_index] * Y + d_param_cam[2 + cam_index] * Z - d_param_cam[9 + cam_index];
+	float Y_proj = d_param_cam[3 + cam_index] * X + d_param_cam[4 + cam_index] * Y + d_param_cam[5 + cam_index] * Z - d_param_cam[10 + cam_index];
+	float Z_proj = d_param_cam[6 + cam_index] * X + d_param_cam[7 + cam_index] * Y + d_param_cam[8 + cam_index] * Z - d_param_cam[11 + cam_index];
 
 	// Projected camera 3D coordinates to projected camera 2D coordinates
-	float x_proj = (d_param_cam[33] * X_proj / Z_proj + d_param_cam[34] * Y_proj / Z_proj + d_param_cam[35]);
-	float y_proj = (d_param_cam[36] * X_proj / Z_proj + d_param_cam[37] * Y_proj / Z_proj + d_param_cam[38]);
+	float x_proj = (d_param_cam[12 + cam_index] * X_proj / Z_proj + d_param_cam[13 + cam_index] * Y_proj / Z_proj + d_param_cam[14 + cam_index]);
+	float y_proj = (d_param_cam[15 + cam_index] * X_proj / Z_proj + d_param_cam[16 + cam_index] * Y_proj / Z_proj + d_param_cam[17 + cam_index]);
 	//float z_proj = Z_proj;
 
 	// Verification it's not out of bounds
@@ -345,10 +359,8 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 	CHK(cudaMemset(d_cost_volume, 255.0, volume_size * sizeof(__half)));//previously float
 
 	// Copy the params into the gpu
-	float* h_params_ref = get_params_cam(ref);
-	float* h_params_cam1 = get_params_cam(cam_vector.at(1));
-	float* h_params_cam2 = get_params_cam(cam_vector.at(2));
-	float* h_params_cam3 = get_params_cam(cam_vector.at(3));
+	float* h_params_ref = get_params_cam(ref, 1, cam_vector);
+	float* h_params_cam = get_params_cam(ref, 0, cam_vector);
 
 #ifdef DEBUG // print the params
 	printf("Print params :\n");
@@ -361,17 +373,19 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 	}
 	printf("\n");
 #endif
-
+	//Used in naive
 	//CHK(cudaMalloc((void**) &d_param_ref, sizeof(double) * 39));
 	//CHK(cudaMalloc((void**) &d_param_cam1, sizeof(double) * 39));
 	//CHK(cudaMalloc((void**) &d_param_cam2, sizeof(double) * 39));
 	//CHK(cudaMalloc((void**) &d_param_cam3, sizeof(double) * 39));
-	//CHK(cudaMemcpy(d_param_ref, h_params_ref, sizeof(double) * 39, cudaMemcpyHostToDevice)); //Used in naive
-	CHK(cudaMemcpyToSymbol(d_param_ref, h_params_ref, sizeof(float) * 39)); //Used in coalesced
-	CHK(cudaMemcpyToSymbol(d_param_cam, h_params_cam1, sizeof(float) * 39)); //Used in coalesced
+	//CHK(cudaMemcpy(d_param_ref, h_params_ref, sizeof(double) * 39, cudaMemcpyHostToDevice)); 
 	//CHK(cudaMemcpy(d_param_cam1, h_params_cam1, sizeof(double) * 39, cudaMemcpyHostToDevice));
 	//CHK(cudaMemcpy(d_param_cam2, h_params_cam2, sizeof(double) * 39, cudaMemcpyHostToDevice));
 	//CHK(cudaMemcpy(d_param_cam3, h_params_cam3, sizeof(double) * 39, cudaMemcpyHostToDevice));
+	//Used in coalesced
+	CHK(cudaMemcpyToSymbol(d_param_ref, h_params_ref, sizeof(float) * 21));
+	CHK(cudaMemcpyToSymbol(d_param_cam, h_params_cam, sizeof(float) * 54));
+
 
 
 	// Define the kernel launch parameters
@@ -389,14 +403,12 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 		d_im_ref, d_im_cam3, d_param_ref, d_param_cam3, d_cost_volume, width, height, z_planes, window);*/
 	//end_cuda_timer(start, "Naive GPU");
 	params_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam1, d_cost_volume, width, height, z_planes, window);
-	CHK(cudaMemcpyToSymbol(d_param_cam, h_params_cam2, sizeof(float) * 39));
+		d_im_ref, d_im_cam1, d_cost_volume,0, width, height, z_planes, window);
 	params_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam2, d_cost_volume, width, height, z_planes, window);
-	CHK(cudaMemcpyToSymbol(d_param_cam, h_params_cam3, sizeof(float) * 39));
+		d_im_ref, d_im_cam2, d_cost_volume,1, width, height, z_planes, window);
 	params_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam3, d_cost_volume, width, height, z_planes, window);
-	end_cuda_timer(start, "Coalesced GPU");
+		d_im_ref, d_im_cam3, d_cost_volume,2, width, height, z_planes, window);
+	end_cuda_timer(start, "Params optimized GPU");
 	CHK(cudaGetLastError());
 	CHK(cudaDeviceSynchronize());
 	CHK(cudaMemcpy(h_cost_volume, d_cost_volume, sizeof(__half) * volume_size, cudaMemcpyDeviceToHost));
