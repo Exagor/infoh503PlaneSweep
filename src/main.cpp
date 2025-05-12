@@ -306,17 +306,8 @@ int main()
 
 	// Allocate a big float buffer for the cost volume and init it
 	__half* cost_volume = new __half[cam_vector.at(0).width * cam_vector.at(0).height * ZPlanes];//previous float
-	for (int i = 0; i < cam_vector.at(0).width * cam_vector.at(0).height * ZPlanes; ++i) {
-		cost_volume[i] = (__half)0;
-	}
 
 #ifdef DEBUG
-	//Debug, print the cost volume
-	for (int i = 0; i < cam_vector.at(0).width; ++i) {//Don't print everything
-		if (i % cam_vector.at(0).width == 0)
-			std::cout << std::endl;
-		std::cout << cost_volume[i] << " ";
-	}
 //Check the images before the kernel
 	// Vizualize the image
 	cv::Mat ref_img = cam_vector.at(0).YUV[0].clone();
