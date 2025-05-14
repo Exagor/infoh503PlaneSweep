@@ -6,6 +6,8 @@
 #define BLOCKSIZE 16 //16 or 32
 __constant__ float d_param_ref[21];
 __constant__ float d_param_cam[54]; //18*3=54
+__constant__ unsigned int d_width;
+__constant__ unsigned int d_height;
 
 // Those functions are an example on how to call cuda functions from the main.cpp
 __global__ void dev_test_vecAdd(int* A, int* B, int* C, int N)
@@ -276,7 +278,6 @@ __global__ void shared_sweeping_plane_kernel(
 	const uint8_t* im_cam,
 	__half* cost_volume,
 	const int cam_nb,
-	const unsigned int width, const unsigned int height,
 	const int z_planes,
 	const int window)
 {
@@ -293,31 +294,31 @@ __global__ void shared_sweeping_plane_kernel(
 	const int y = blockIdx.y * blockDim.y + ty;
 	const int zi = blockIdx.z;
 
-	if (x >= width || y >= height || zi >= z_planes) return;
+	if (x >= d_width || y >= d_height || zi >= z_planes) return;
 
 	// Load im_ref into shared memory (with borders)
 	const int lx = tx + pad;
 	const int ly = ty + pad;
 
 	// Fill center
-	shared_ref[INDEX_2D(ly, lx, shared_width)] = im_ref[INDEX_2D(y, x, width)];
+	shared_ref[INDEX_2D(ly, lx, shared_width)] = im_ref[INDEX_2D(y, x, d_width)];
 
 	// Borders - left/right
 	if (tx < pad) {
 		int left_x = x - pad;
-		shared_ref[INDEX_2D(ly, tx, shared_width)] = (left_x >= 0) ? im_ref[INDEX_2D(y, left_x, width)] : 0; //fill border with 0
+		shared_ref[INDEX_2D(ly, tx, shared_width)] = (left_x >= 0) ? im_ref[INDEX_2D(y, left_x, d_width)] : 0; //fill border with 0
 
 		int right_x = x + blockDim.x;
-		shared_ref[INDEX_2D(ly, tx + blockDim.x + pad, shared_width)] = (right_x < width) ? im_ref[INDEX_2D(y,right_x, width)] : 0;
+		shared_ref[INDEX_2D(ly, tx + blockDim.x + pad, shared_width)] = (right_x < d_width) ? im_ref[INDEX_2D(y,right_x, d_width)] : 0;
 	}
 
 	// Borders - top/bottom
 	if (ty < pad) {
 		int top_y = y - pad;
-		shared_ref[INDEX_2D(ty, lx, shared_width)] = (top_y >= 0) ? im_ref[INDEX_2D(top_y, x, width)] : 0;
+		shared_ref[INDEX_2D(ty, lx, shared_width)] = (top_y >= 0) ? im_ref[INDEX_2D(top_y, x, d_width)] : 0;
 
 		int bottom_y = y + blockDim.y;
-		shared_ref[INDEX_2D(ty + blockDim.y + pad, lx, shared_width)] = (bottom_y < height) ? im_ref[INDEX_2D(bottom_y, x, width)] : 0;
+		shared_ref[INDEX_2D(ty + blockDim.y + pad, lx, shared_width)] = (bottom_y < d_height) ? im_ref[INDEX_2D(bottom_y, x, d_width)] : 0;
 	}
 
 	// Corners
@@ -328,16 +329,16 @@ __global__ void shared_sweeping_plane_kernel(
 		int br_x = x + blockDim.x, br_y = y + blockDim.y;
 
 		shared_ref[INDEX_2D(ty, tx, shared_width)] =
-			(tl_x >= 0 && tl_y >= 0) ? im_ref[INDEX_2D(tl_y, tl_x, width)] : 0;
+			(tl_x >= 0 && tl_y >= 0) ? im_ref[INDEX_2D(tl_y, tl_x, d_width)] : 0;
 
 		shared_ref[INDEX_2D(ty, tx + blockDim.x + pad, shared_width)] =
-			(tr_x < width && tr_y >= 0) ? im_ref[INDEX_2D(tr_y, tr_x, width)] : 0;
+			(tr_x < d_width && tr_y >= 0) ? im_ref[INDEX_2D(tr_y, tr_x, d_width)] : 0;
 
 		shared_ref[INDEX_2D(ty + blockDim.y + pad, tx, shared_width)] =
-			(bl_x >= 0 && bl_y < height) ? im_ref[INDEX_2D(bl_y, bl_x, width)] : 0;
+			(bl_x >= 0 && bl_y < d_height) ? im_ref[INDEX_2D(bl_y, bl_x, d_width)] : 0;
 
 		shared_ref[INDEX_2D(ty + blockDim.y + pad, tx + blockDim.x + pad, shared_width)] =
-			(br_x < width && br_y < height) ? im_ref[INDEX_2D(br_y, br_x, width)] : 0;
+			(br_x < d_width && br_y < d_height) ? im_ref[INDEX_2D(br_y, br_x, d_width)] : 0;
 	}
 
 	__syncthreads();
@@ -366,8 +367,8 @@ __global__ void shared_sweeping_plane_kernel(
 	float y_proj = (d_param_cam[15 + cam_index] * X_proj / Z_proj + d_param_cam[16 + cam_index] * Y_proj / Z_proj + d_param_cam[17 + cam_index]);
 
 	// Verification it's not out of bounds
-	x_proj = x_proj < 0 || x_proj >= width ? 0 : roundf(x_proj);
-	y_proj = y_proj < 0 || y_proj >= height ? 0 : roundf(y_proj);
+	x_proj = x_proj < 0 || x_proj >= d_width ? 0 : roundf(x_proj);
+	y_proj = y_proj < 0 || y_proj >= d_height ? 0 : roundf(y_proj);
 
 	// (2) Compute the SAD between the windows of ref and cam
 	float cost = 0.0f;
@@ -384,9 +385,9 @@ __global__ void shared_sweeping_plane_kernel(
 			int py = py_base + dy;
 
 			//if (rx < 0 || ry < 0 || rx >= width || ry >= height) continue; //Don't need to verify because lx = tx + pad
-			if (px < 0 || py < 0 || px >= width || py >= height) continue;
+			if (px < 0 || py < 0 || px >= d_width || py >= d_height) continue;
 
-			int cam_idx = INDEX_2D(py, px, width);
+			int cam_idx = INDEX_2D(py, px, d_width);
 			float ref_val = (float)shared_ref[INDEX_2D(ry, rx, shared_width)];
 			float cam_val = (float)im_cam[cam_idx];
 			cost += fabsf(ref_val - cam_val);
@@ -396,15 +397,124 @@ __global__ void shared_sweeping_plane_kernel(
 	cost = (count > 0) ? cost / count : 255.0f;
 
 	// (3) Store the min cost in the cost volume
+	int idx = INDEX_3D(zi, y, x, d_height, d_width);
+	cost_volume[idx] = fminf(cost_volume[idx], __float2half(cost));
+}
+
+__global__ void shared_9blocks_sweeping_plane_kernel(
+	const uint8_t* im_ref,
+	const uint8_t* im_cam,
+	__half* cost_volume,
+	const int cam_nb,
+	const unsigned int width, const unsigned int height,
+	const int z_planes,
+	const int window)
+{
+	extern __shared__ uint8_t shared_ref[];
+
+	const int pad = window / 2;
+	const int blockW = blockDim.x;
+	const int blockH = blockDim.y;
+
+	const int shared_width = blockW * 3;
+	const int shared_height = blockH * 3;
+
+	const int tx = threadIdx.x;
+	const int ty = threadIdx.y;
+
+	const int x = blockIdx.x * blockW + tx;
+	const int y = blockIdx.y * blockH + ty;
+	const int zi = blockIdx.z;
+
+	if (x >= width || y >= height || zi >= z_planes) return;
+
+	// Index for shared memory
+	for (int dy = -blockH; dy <= blockH; dy += blockH) {
+		for (int dx = -blockW; dx <= blockW; dx += blockW) {
+			int global_x = x + dx;
+			int global_y = y + dy;
+
+			int shared_x = tx + dx + blockW;
+			int shared_y = ty + dy + blockH;
+
+			uint8_t val = 0;
+			if (global_x >= 0 && global_x < width && global_y >= 0 && global_y < height) {
+				val = im_ref[INDEX_2D(global_y, global_x, width)];
+			}
+
+			shared_ref[INDEX_2D(shared_y, shared_x, shared_width)] = val;
+		}
+	}
+
+	__syncthreads();
+
+	// (1) compute the projection index
+	int cam_index = (cam_nb * 18);
+	float z = 0.3f * 1.1f / (0.3f + ((float)zi / z_planes) * (1.1f - 0.3f)); // Depth calculation
+
+	// 2D ref to 3D in ref camera
+	float X_ref = (d_param_ref[0] * x + d_param_ref[1] * y + d_param_ref[2]) * z;
+	float Y_ref = (d_param_ref[3] * x + d_param_ref[4] * y + d_param_ref[5]) * z;
+	float Z_ref = (d_param_ref[6] * x + d_param_ref[7] * y + d_param_ref[8]) * z;
+
+	// 3D ref to world
+	float X = d_param_ref[9] * X_ref + d_param_ref[10] * Y_ref + d_param_ref[11] * Z_ref - d_param_ref[18];
+	float Y = d_param_ref[12] * X_ref + d_param_ref[13] * Y_ref + d_param_ref[14] * Z_ref - d_param_ref[19];
+	float Z = d_param_ref[15] * X_ref + d_param_ref[16] * Y_ref + d_param_ref[17] * Z_ref - d_param_ref[20];
+
+	// World to camera 3D
+	float X_proj = d_param_cam[0 + cam_index] * X + d_param_cam[1 + cam_index] * Y + d_param_cam[2 + cam_index] * Z - d_param_cam[9 + cam_index];
+	float Y_proj = d_param_cam[3 + cam_index] * X + d_param_cam[4 + cam_index] * Y + d_param_cam[5 + cam_index] * Z - d_param_cam[10 + cam_index];
+	float Z_proj = d_param_cam[6 + cam_index] * X + d_param_cam[7 + cam_index] * Y + d_param_cam[8 + cam_index] * Z - d_param_cam[11 + cam_index];
+
+	// Camera projection to 2D
+	float x_proj = (d_param_cam[12 + cam_index] * X_proj / Z_proj + d_param_cam[13 + cam_index] * Y_proj / Z_proj + d_param_cam[14 + cam_index]);
+	float y_proj = (d_param_cam[15 + cam_index] * X_proj / Z_proj + d_param_cam[16 + cam_index] * Y_proj / Z_proj + d_param_cam[17 + cam_index]);
+
+	// Clamp projected coordinates
+	x_proj = x_proj < 0 || x_proj >= width ? 0 : roundf(x_proj);
+	y_proj = y_proj < 0 || y_proj >= height ? 0 : roundf(y_proj);
+
+	// (2) Compute SAD cost
+	float cost = 0.0f;
+	float count = 0.0f;
+
+	int px_base = (int)x_proj;
+	int py_base = (int)y_proj;
+
+	int lx = tx + blockW; // offset into shared memory
+	int ly = ty + blockH;
+
+	for (int dy = -pad; dy <= pad; dy++) {
+		for (int dx = -pad; dx <= pad; dx++) {
+			int ref_rx = lx + dx;
+			int ref_ry = ly + dy;
+
+			int px = px_base + dx;
+			int py = py_base + dy;
+
+			if (px < 0 || py < 0 || px >= width || py >= height) continue;
+
+			float ref_val = (float)shared_ref[INDEX_2D(ref_ry, ref_rx, shared_width)];
+			float cam_val = (float)im_cam[INDEX_2D(py, px, width)];
+			cost += fabsf(ref_val - cam_val);
+			count += 1.0f;
+		}
+	}
+
+	cost = (count > 0) ? cost / count : 255.0f;
+
+	// (3) Write min cost
 	int idx = INDEX_3D(zi, y, x, height, width);
 	cost_volume[idx] = fminf(cost_volume[idx], __float2half(cost));
 }
 
+
 void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_planes, int window, __half* h_cost_volume)
 {
 	cudaEvent_t start;
-	const unsigned int height = ref.height;
-	const unsigned int width = ref.width;
+	unsigned int height = ref.height;
+	unsigned int width = ref.width;
 	const unsigned int img_size = width * height;
 	const unsigned int volume_size = img_size * z_planes;
 
@@ -413,103 +523,40 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 	uint8_t* d_im_cam2 = 0;
 	uint8_t* d_im_cam3 = 0;
 	__half* d_cost_volume = 0; //previously float
-	//For the params used in naive
-	//double* d_param_ref = 0;
-	//double* d_param_cam1 = 0;
-	//double* d_param_cam2 = 0;
-	//double* d_param_cam3 = 0;
 
 	CHK(cudaSetDevice(0));
-
-	// init variables to contain image
-	uint8_t* ref_flattened = new uint8_t[img_size];
-	uint8_t* cam1_flattened = new uint8_t[img_size];
-	uint8_t* cam2_flattened = new uint8_t[img_size];
-	uint8_t* cam3_flattened = new uint8_t[img_size];
-	// flatten the matrix
-	for (int y = 0; y < ref.height; ++y) {
-		for (int x = 0; x < ref.width; ++x) {
-			ref_flattened[INDEX_2D(y,x,ref.width)] = ref.YUV[0].at<uint8_t>(y, x);
-		}
-	}
-	for (int y = 0; y < cam_vector.at(1).height; ++y) {
-		for (int x = 0; x < cam_vector.at(1).width; ++x) {
-			cam1_flattened[INDEX_2D(y, x, cam_vector.at(1).width)] = cam_vector.at(1).YUV[0].at<uint8_t>(y, x);
-		}
-	}
-	for (int y = 0; y < cam_vector.at(2).height; ++y) {
-		for (int x = 0; x < cam_vector.at(2).width; ++x) {
-			cam2_flattened[INDEX_2D(y, x, cam_vector.at(2).width)] = cam_vector.at(2).YUV[0].at<uint8_t>(y, x);
-		}
-	}
-	for (int y = 0; y < cam_vector.at(3).height; ++y) {
-		for (int x = 0; x < cam_vector.at(3).width; ++x) {
-			cam3_flattened[INDEX_2D(y, x, cam_vector.at(3).width)] = cam_vector.at(3).YUV[0].at<uint8_t>(y, x);
-		}
-	}
-	
-#ifdef DEBUG // print the flattened matrix
-	for (int y = 0; y < ref.height/10; ++y) {
-		for (int x = 0; x < ref.width/10; ++x) {
-			printf("%d ", ref_flattened[INDEX_2D(y, x, ref.width)]);
-		}
-		printf("\n");
-	}
-	for (int y = 0; y < cam_vector.at(1).height/10; ++y) {
-		for (int x = 0; x < cam_vector.at(1).width/10; ++x) {
-			printf("%d ", cam_flattened[INDEX_2D(y, x, cam_vector.at(1).width)]);
-		}
-		printf("\n");
-	}
-#endif
 
 	CHK(cudaMalloc((void**) &d_im_ref, img_size * sizeof(uint8_t)));
 	CHK(cudaMalloc((void**) &d_im_cam1, img_size * sizeof(uint8_t)));
 	CHK(cudaMalloc((void**) &d_im_cam2, img_size * sizeof(uint8_t)));
 	CHK(cudaMalloc((void**) &d_im_cam3, img_size * sizeof(uint8_t)));
 	CHK(cudaMalloc((void**) &d_cost_volume, volume_size * sizeof(__half)));//previously float
-	CHK(cudaMemcpy(d_im_ref, ref_flattened, img_size * sizeof(uint8_t), cudaMemcpyHostToDevice));
-	CHK(cudaMemcpy(d_im_cam1, cam1_flattened, img_size * sizeof(uint8_t), cudaMemcpyHostToDevice));
-	CHK(cudaMemcpy(d_im_cam2, cam2_flattened, img_size * sizeof(uint8_t), cudaMemcpyHostToDevice));
-	CHK(cudaMemcpy(d_im_cam3, cam3_flattened, img_size * sizeof(uint8_t), cudaMemcpyHostToDevice));
+	CHK(cudaMemcpy(d_im_ref, ref.YUV[0].data, img_size * sizeof(uint8_t), cudaMemcpyHostToDevice));
+	CHK(cudaMemcpy(d_im_cam1, cam_vector.at(1).YUV[0].data, img_size * sizeof(uint8_t), cudaMemcpyHostToDevice));
+	CHK(cudaMemcpy(d_im_cam2, cam_vector.at(2).YUV[0].data, img_size * sizeof(uint8_t), cudaMemcpyHostToDevice));
+	CHK(cudaMemcpy(d_im_cam3, cam_vector.at(3).YUV[0].data, img_size * sizeof(uint8_t), cudaMemcpyHostToDevice));
 	CHK(cudaMemset(d_cost_volume, 255.0, volume_size * sizeof(__half)));//previously float
 
 	// Copy the params into the gpu
 	float* h_params_ref = get_params_cam(ref, 1, cam_vector);
 	float* h_params_cam = get_params_cam(ref, 0, cam_vector);
 
-#ifdef DEBUG // print the params
-	printf("Print params :\n");
-	for (int i = 0; i < 39; ++i) {
-		printf("%f ", h_params_ref[i]);
-	}
-	printf("\n");
-	for (int i = 0; i < 39; ++i) {
-		printf("%f ", h_params_cam1[i]);
-	}
-	printf("\n");
-#endif
-	//Used in naive
-	//CHK(cudaMalloc((void**) &d_param_ref, sizeof(double) * 39));
-	//CHK(cudaMalloc((void**) &d_param_cam1, sizeof(double) * 39));
-	//CHK(cudaMalloc((void**) &d_param_cam2, sizeof(double) * 39));
-	//CHK(cudaMalloc((void**) &d_param_cam3, sizeof(double) * 39));
-	//CHK(cudaMemcpy(d_param_ref, h_params_ref, sizeof(double) * 39, cudaMemcpyHostToDevice)); 
-	//CHK(cudaMemcpy(d_param_cam1, h_params_cam1, sizeof(double) * 39, cudaMemcpyHostToDevice));
-	//CHK(cudaMemcpy(d_param_cam2, h_params_cam2, sizeof(double) * 39, cudaMemcpyHostToDevice));
-	//CHK(cudaMemcpy(d_param_cam3, h_params_cam3, sizeof(double) * 39, cudaMemcpyHostToDevice));
-	//Used in coalesced
+	//Copy parameters in the constant memory
 	CHK(cudaMemcpyToSymbol(d_param_ref, h_params_ref, sizeof(float) * 21));
 	CHK(cudaMemcpyToSymbol(d_param_cam, h_params_cam, sizeof(float) * 54));
+	CHK(cudaMemcpyToSymbol(d_width, (const void*) &width, sizeof(unsigned int)));
+	CHK(cudaMemcpyToSymbol(d_height, (const void*) &height, sizeof(unsigned int)));
 
 	// Define the kernel launch parameters
 	dim3 block_size(BLOCKSIZE, BLOCKSIZE); //Number of threads per block (size of blocks) 16*16=256 or 32*32=1024
 	dim3 grid_size((width + BLOCKSIZE-1) / BLOCKSIZE, (height + BLOCKSIZE-1) / BLOCKSIZE, z_planes); //Assure that all pixels are covered with (width+15)/16 and (height+15)/16
 	printf("Launching kernel with grid size: %d %d %d\n", grid_size.x, grid_size.y, grid_size.z);
 	printf("Launching kernel with block size: %d %d\n", block_size.x, block_size.y);
+
 	// Parameters for shared memory
 	int pad = window / 2;
-	int shared_mem_size = (BLOCKSIZE + 2 * pad) * (BLOCKSIZE + 2 * pad) * sizeof(uint8_t);
+	int shared_mem_size = (BLOCKSIZE + 2 * pad) * (BLOCKSIZE + 2 * pad) * sizeof(uint8_t); //for shared kernel
+	//int shared_mem_size = (3 * BLOCKSIZE) * (3 * BLOCKSIZE) * sizeof(uint8_t); //for shared 9 blocks
 
 	// launch 1 kernel per camera
 	start = start_cuda_timer();
@@ -528,12 +575,19 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 		d_im_ref, d_im_cam3, d_cost_volume,2, width, height, z_planes, window);
 	end_cuda_timer(start, "Params optimized GPU");*/
 	shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam1, d_cost_volume, 0, width, height, z_planes, window);
+		d_im_ref, d_im_cam1, d_cost_volume, 0, z_planes, window);
 	shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam2, d_cost_volume, 1, width, height, z_planes, window);
+		d_im_ref, d_im_cam2, d_cost_volume, 1, z_planes, window);
 	shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam3, d_cost_volume, 2, width, height, z_planes, window);
+		d_im_ref, d_im_cam3, d_cost_volume, 2, z_planes, window);
 	end_cuda_timer(start, "Shared GPU");
+	/*shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
+		d_im_ref, d_im_cam1, d_cost_volume, 0, width, height, z_planes, window);
+	shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
+		d_im_ref, d_im_cam2, d_cost_volume, 1, width, height, z_planes, window);
+	shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
+		d_im_ref, d_im_cam3, d_cost_volume, 2, width, height, z_planes, window);
+	end_cuda_timer(start, "Shared 9 blocks GPU");*/
 	CHK(cudaGetLastError());
 	CHK(cudaDeviceSynchronize());
 	CHK(cudaMemcpy(h_cost_volume, d_cost_volume, sizeof(__half) * volume_size, cudaMemcpyDeviceToHost));
@@ -544,16 +598,6 @@ Error:
 	CHK(cudaFree(d_im_cam2));
 	CHK(cudaFree(d_im_cam3));
 	CHK(cudaFree(d_cost_volume));
-	//Used in naive
-	//CHK(cudaFree(d_param_ref));
-	//CHK(cudaFree(d_param_cam));
-	//CHK(cudaFree(d_param_cam1));
-	//CHK(cudaFree(d_param_cam2));
-	//CHK(cudaFree(d_param_cam3));
-	delete[] ref_flattened;
-	delete[] cam1_flattened;
-	delete[] cam2_flattened;
-	delete[] cam3_flattened;
 
 	// Needed for profiling
 	CHK(cudaDeviceReset());
