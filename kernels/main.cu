@@ -137,26 +137,26 @@ __global__ void naive_sweeping_plane_kernel(
 		return;
 	// (1) compute the projection index
 	//double x_proj, y_proj; //At the end see if it optimize the code by putting float instead of double
-	float z = 0.3f * 1.1f / (0.3f + ((float)zi / z_planes) * (1.1f - 0.3f)); //Defined in constants.hpp
+	double z = 0.3f * 1.1f / (0.3f + ((float)zi / z_planes) * (1.1f - 0.3f)); //Defined in constants.hpp
 
 	// 2D ref camera point to 3D in ref camera coordinates (p * K_inv)
-	float X_ref = (param_ref[0] * x + param_ref[1] * y + param_ref[2]) * z; //Was float type
-	float Y_ref = (param_ref[3] * x + param_ref[4] * y + param_ref[5]) * z;
-	float Z_ref = (param_ref[6] * x + param_ref[7] * y + param_ref[8]) * z;
+	double X_ref = (param_ref[0] * x + param_ref[1] * y + param_ref[2]) * z; //Was float type
+	double Y_ref = (param_ref[3] * x + param_ref[4] * y + param_ref[5]) * z;
+	double Z_ref = (param_ref[6] * x + param_ref[7] * y + param_ref[8]) * z;
 
 	// 3D in ref camera coordinates to 3D world
-	float X = param_ref[9] * X_ref + param_ref[10] * Y_ref + param_ref[11] * Z_ref - param_ref[18];
-	float Y = param_ref[12] * X_ref + param_ref[13] * Y_ref + param_ref[14] * Z_ref - param_ref[19];
-	float Z = param_ref[15] * X_ref + param_ref[16] * Y_ref + param_ref[17] * Z_ref - param_ref[20];
+	double X = param_ref[9] * X_ref + param_ref[10] * Y_ref + param_ref[11] * Z_ref - param_ref[18];
+	double Y = param_ref[12] * X_ref + param_ref[13] * Y_ref + param_ref[14] * Z_ref - param_ref[19];
+	double Z = param_ref[15] * X_ref + param_ref[16] * Y_ref + param_ref[17] * Z_ref - param_ref[20];
 
 	// 3D world to projected camera 3D coordinates
-	float X_proj = param_cam[21] * X + param_cam[22] * Y + param_cam[23] * Z - param_cam[30];
-	float Y_proj = param_cam[24] * X + param_cam[25] * Y + param_cam[26] * Z - param_cam[31];
-	float Z_proj = param_cam[27] * X + param_cam[28] * Y + param_cam[29] * Z - param_cam[32];
+	double X_proj = param_cam[21] * X + param_cam[22] * Y + param_cam[23] * Z - param_cam[30];
+	double Y_proj = param_cam[24] * X + param_cam[25] * Y + param_cam[26] * Z - param_cam[31];
+	double Z_proj = param_cam[27] * X + param_cam[28] * Y + param_cam[29] * Z - param_cam[32];
 
 	// Projected camera 3D coordinates to projected camera 2D coordinates
-	float x_proj = (param_cam[33] * X_proj / Z_proj + param_cam[34] * Y_proj / Z_proj + param_cam[35]);
-	float y_proj = (param_cam[36] * X_proj / Z_proj + param_cam[37] * Y_proj / Z_proj + param_cam[38]);
+	double x_proj = (param_cam[33] * X_proj / Z_proj + param_cam[34] * Y_proj / Z_proj + param_cam[35]);
+	double y_proj = (param_cam[36] * X_proj / Z_proj + param_cam[37] * Y_proj / Z_proj + param_cam[38]);
 	//float z_proj = Z_proj;
 
 	// Verification it's not out of bounds
@@ -509,6 +509,157 @@ __global__ void shared_9blocks_sweeping_plane_kernel(
 	cost_volume[idx] = fminf(cost_volume[idx], __float2half(cost));
 }
 
+__global__ void shared_all_sweeping_plane_kernel(
+	const uint8_t* im_ref,
+	const uint8_t* im_cam,
+	__half* cost_volume,
+	const int cam_nb,
+	const int z_planes,
+	const int window)
+{
+	const int pad = window / 2; //For the borders of the block
+	const int shared_width = blockDim.x + 2 * pad;
+	const int shared_height = blockDim.y + 2 * pad;
+
+	extern __shared__ uint8_t shared_mem[]; //Have to do that because we can't have 2 shared memory arrays
+	uint8_t* shared_ref = shared_mem;
+	uint8_t* shared_cam = shared_mem + shared_width * shared_height;
+
+	const int tx = threadIdx.x;
+	const int ty = threadIdx.y;
+
+	const int x = blockIdx.x * blockDim.x + tx;
+	const int y = blockIdx.y * blockDim.y + ty;
+	const int zi = blockIdx.z;
+
+	if (x >= d_width || y >= d_height || zi >= z_planes) return;
+
+	// (1) compute the projection index
+	int cam_index = (cam_nb * 18); //18*3=54
+	float z = 0.3f * 1.1f / (0.3f + ((float)zi / z_planes) * (1.1f - 0.3f)); //Defined in constants.hpp
+
+	// 2D ref camera point to 3D in ref camera coordinates (p * K_inv)
+	float X_ref = (d_param_ref[0] * x + d_param_ref[1] * y + d_param_ref[2]) * z;
+	float Y_ref = (d_param_ref[3] * x + d_param_ref[4] * y + d_param_ref[5]) * z;
+	float Z_ref = (d_param_ref[6] * x + d_param_ref[7] * y + d_param_ref[8]) * z;
+
+	// 3D in ref camera coordinates to 3D world
+	float X = d_param_ref[9] * X_ref + d_param_ref[10] * Y_ref + d_param_ref[11] * Z_ref - d_param_ref[18];
+	float Y = d_param_ref[12] * X_ref + d_param_ref[13] * Y_ref + d_param_ref[14] * Z_ref - d_param_ref[19];
+	float Z = d_param_ref[15] * X_ref + d_param_ref[16] * Y_ref + d_param_ref[17] * Z_ref - d_param_ref[20];
+
+	// 3D world to projected camera 3D coordinates
+	float X_proj = d_param_cam[0 + cam_index] * X + d_param_cam[1 + cam_index] * Y + d_param_cam[2 + cam_index] * Z - d_param_cam[9 + cam_index];
+	float Y_proj = d_param_cam[3 + cam_index] * X + d_param_cam[4 + cam_index] * Y + d_param_cam[5 + cam_index] * Z - d_param_cam[10 + cam_index];
+	float Z_proj = d_param_cam[6 + cam_index] * X + d_param_cam[7 + cam_index] * Y + d_param_cam[8 + cam_index] * Z - d_param_cam[11 + cam_index];
+
+	// Projected camera 3D coordinates to projected camera 2D coordinates
+	float x_proj = (d_param_cam[12 + cam_index] * X_proj / Z_proj + d_param_cam[13 + cam_index] * Y_proj / Z_proj + d_param_cam[14 + cam_index]);
+	float y_proj = (d_param_cam[15 + cam_index] * X_proj / Z_proj + d_param_cam[16 + cam_index] * Y_proj / Z_proj + d_param_cam[17 + cam_index]);
+
+	// Verification it's not out of bounds
+	x_proj = x_proj < 0 || x_proj >= d_width ? 0 : roundf(x_proj);
+	y_proj = y_proj < 0 || y_proj >= d_height ? 0 : roundf(y_proj);
+
+	int px_base = (int)x_proj;
+	int py_base = (int)y_proj;
+
+	// Load im_ref and im_cam into shared memory (with borders)
+	const int lx = tx + pad;
+	const int ly = ty + pad;
+
+	// Fill center
+	shared_ref[INDEX_2D(ly, lx, shared_width)] = im_ref[INDEX_2D(y, x, d_width)];
+	shared_cam[INDEX_2D(ly, lx, shared_width)] = im_cam[INDEX_2D(py_base, px_base, d_width)];
+
+	// Borders - left/right
+	if (tx < pad) {
+		int left_x = x - pad;
+		int left_x_cam = px_base - pad;
+		shared_ref[INDEX_2D(ly, tx, shared_width)] = (left_x >= 0) ? im_ref[INDEX_2D(y, left_x, d_width)] : 0; //fill border with 0
+		shared_cam[INDEX_2D(ly, tx, shared_width)] = (left_x_cam >= 0) ? im_cam[INDEX_2D(py_base, left_x_cam, d_width)] : 0; //fill border with 0
+
+		int right_x = x + blockDim.x;
+		int right_x_cam = px_base + blockDim.x;
+		shared_ref[INDEX_2D(ly, tx + blockDim.x + pad, shared_width)] = (right_x < d_width) ? im_ref[INDEX_2D(y, right_x, d_width)] : 0;
+		shared_cam[INDEX_2D(ly, tx + blockDim.x + pad, shared_width)] = (right_x_cam < d_width) ? im_cam[INDEX_2D(py_base, right_x_cam, d_width)] : 0;
+	}
+
+	// Borders - top/bottom
+	if (ty < pad) {
+		int top_y = y - pad;
+		int top_y_cam = py_base - pad;
+		shared_ref[INDEX_2D(ty, lx, shared_width)] = (top_y >= 0) ? im_ref[INDEX_2D(top_y, x, d_width)] : 0;
+		shared_cam[INDEX_2D(ty, lx, shared_width)] = (top_y_cam >= 0) ? im_cam[INDEX_2D(top_y_cam, px_base, d_width)] : 0;
+
+		int bottom_y = y + blockDim.y;
+		int bottom_y_cam = py_base + blockDim.y;
+		shared_ref[INDEX_2D(ty + blockDim.y + pad, lx, shared_width)] = (bottom_y < d_height) ? im_ref[INDEX_2D(bottom_y, x, d_width)] : 0;
+		shared_cam[INDEX_2D(ty + blockDim.y + pad, lx, shared_width)] = (bottom_y_cam < d_height) ? im_cam[INDEX_2D(bottom_y_cam, px_base, d_width)] : 0;
+	}
+
+	// Corners
+	if (tx < pad && ty < pad) {
+		//for ref
+		int tl_x = x - pad, tl_y = y - pad;
+		int tr_x = x + blockDim.x, tr_y = y - pad;
+		int bl_x = x - pad, bl_y = y + blockDim.y;
+		int br_x = x + blockDim.x, br_y = y + blockDim.y;
+		//for cam
+		int tl_x_cam = px_base - pad, tl_y_cam = py_base - pad;
+		int tr_x_cam = px_base + blockDim.x, tr_y_cam = py_base - pad;
+		int bl_x_cam = px_base - pad, bl_y_cam = py_base + blockDim.y;
+		int br_x_cam = px_base + blockDim.x, br_y_cam = py_base + blockDim.y;
+		//for ref
+		shared_ref[INDEX_2D(ty, tx, shared_width)] =
+			(tl_x >= 0 && tl_y >= 0) ? im_ref[INDEX_2D(tl_y, tl_x, d_width)] : 0;
+		shared_ref[INDEX_2D(ty, tx + blockDim.x + pad, shared_width)] =
+			(tr_x < d_width && tr_y >= 0) ? im_ref[INDEX_2D(tr_y, tr_x, d_width)] : 0;
+		shared_ref[INDEX_2D(ty + blockDim.y + pad, tx, shared_width)] =
+			(bl_x >= 0 && bl_y < d_height) ? im_ref[INDEX_2D(bl_y, bl_x, d_width)] : 0;
+		shared_ref[INDEX_2D(ty + blockDim.y + pad, tx + blockDim.x + pad, shared_width)] =
+			(br_x < d_width && br_y < d_height) ? im_ref[INDEX_2D(br_y, br_x, d_width)] : 0;
+		//for cam
+		shared_cam[INDEX_2D(ty, tx, shared_width)] =
+			(tl_x_cam >= 0 && tl_y_cam >= 0) ? im_cam[INDEX_2D(tl_y_cam, tl_x_cam, d_width)] : 0;
+		shared_cam[INDEX_2D(ty, tx + blockDim.x + pad, shared_width)] =
+			(tr_x_cam < d_width && tr_y_cam >= 0) ? im_cam[INDEX_2D(tr_y_cam, tr_x_cam, d_width)] : 0;
+		shared_cam[INDEX_2D(ty + blockDim.y + pad, tx, shared_width)] =
+			(bl_x_cam >= 0 && bl_y_cam < d_height) ? im_cam[INDEX_2D(bl_y_cam, bl_x_cam, d_width)] : 0;
+		shared_cam[INDEX_2D(ty + blockDim.y + pad, tx + blockDim.x + pad, shared_width)] =
+			(br_x_cam < d_width && br_y_cam < d_height) ? im_cam[INDEX_2D(br_y_cam, br_x_cam, d_width)] : 0;
+	}
+
+	__syncthreads();
+
+	// (2) Compute the SAD between the windows of ref and cam
+	float cost = 0.0f;
+	float count = 0;
+
+	for (int dy = -pad; dy <= pad; dy++) { //pad is half the window size
+		for (int dx = -pad; dx <= pad; dx++) {
+			int rx = lx + dx;
+			int ry = ly + dy;
+
+			//int px = px_base + dx;
+			//int py = py_base + dy;
+
+			//if (rx < 0 || ry < 0 || rx >= width || ry >= height) continue; //Don't need to verify because lx = tx + pad
+			//if (px < 0 || py < 0 || px >= d_width || py >= d_height) continue; //don't need to verify because lx = tx + pad
+
+			//float ref_val = (float)shared_ref[INDEX_2D(ry, rx, shared_width)];
+			//float cam_val = (float)shared_cam[INDEX_2D(ry, rx, shared_width)];
+			cost += fabsf(shared_ref[INDEX_2D(ry, rx, shared_width)] - shared_cam[INDEX_2D(ry, rx, shared_width)]);
+			count += 1.0f;
+		}
+	}
+	cost = (count > 0) ? cost / count : 255.0f;
+
+	// (3) Store the min cost in the cost volume
+	int idx = INDEX_3D(zi, y, x, d_height, d_width);
+	cost_volume[idx] = fminf(cost_volume[idx], __float2half(cost));
+}
+
 
 void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_planes, int window, __half* h_cost_volume)
 {
@@ -555,8 +706,9 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 
 	// Parameters for shared memory
 	int pad = window / 2;
-	int shared_mem_size = (BLOCKSIZE + 2 * pad) * (BLOCKSIZE + 2 * pad) * sizeof(uint8_t); //for shared kernel
+	//int shared_mem_size = (BLOCKSIZE + 2 * pad) * (BLOCKSIZE + 2 * pad) * sizeof(uint8_t); //for shared kernel
 	//int shared_mem_size = (3 * BLOCKSIZE) * (3 * BLOCKSIZE) * sizeof(uint8_t); //for shared 9 blocks
+	int shared_mem_size = (BLOCKSIZE + 2 * pad) * (BLOCKSIZE + 2 * pad) * sizeof(uint8_t)*2; //for shared all
 
 	// launch 1 kernel per camera
 	start = start_cuda_timer();
@@ -574,13 +726,13 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 	params_sweeping_plane_kernel <<<grid_size, block_size>>> (
 		d_im_ref, d_im_cam3, d_cost_volume,2, width, height, z_planes, window);
 	end_cuda_timer(start, "Params optimized GPU");*/
-	shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
+	/*shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
 		d_im_ref, d_im_cam1, d_cost_volume, 0, z_planes, window);
 	shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
 		d_im_ref, d_im_cam2, d_cost_volume, 1, z_planes, window);
 	shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
 		d_im_ref, d_im_cam3, d_cost_volume, 2, z_planes, window);
-	end_cuda_timer(start, "Shared GPU");
+	end_cuda_timer(start, "Shared GPU");*/
 	/*shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
 		d_im_ref, d_im_cam1, d_cost_volume, 0, width, height, z_planes, window);
 	shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
@@ -588,6 +740,13 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 	shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
 		d_im_ref, d_im_cam3, d_cost_volume, 2, width, height, z_planes, window);
 	end_cuda_timer(start, "Shared 9 blocks GPU");*/
+	shared_all_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
+		d_im_ref, d_im_cam1, d_cost_volume, 0, z_planes, window);
+	shared_all_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
+		d_im_ref, d_im_cam2, d_cost_volume, 1, z_planes, window);
+	shared_all_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
+		d_im_ref, d_im_cam3, d_cost_volume, 2, z_planes, window);
+	end_cuda_timer(start, "Shared all GPU");
 	CHK(cudaGetLastError());
 	CHK(cudaDeviceSynchronize());
 	CHK(cudaMemcpy(h_cost_volume, d_cost_volume, sizeof(__half) * volume_size, cudaMemcpyDeviceToHost));

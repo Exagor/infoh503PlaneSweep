@@ -366,9 +366,9 @@ int main()
 	cv::Mat depth = find_min(cost_cube);
 #endif
 	// see the result
-	cv::namedWindow("Depth", cv::WINDOW_NORMAL);
-	cv::imshow("Depth", depth);
-	cv::waitKey(0);
+	//cv::namedWindow("Depth", cv::WINDOW_NORMAL);
+	//cv::imshow("Depth", depth);
+	//cv::waitKey(0);
 
 	cv::imwrite("../out/depth_map.png", depth);
 
