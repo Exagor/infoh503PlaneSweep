@@ -3,56 +3,11 @@
 #include <cstdio>
 
 //#define DEBUG
-#define BLOCKSIZE 16 //16 or 32
-__constant__ float d_param_ref[21];
-__constant__ float d_param_cam[54]; //18*3=54
+#define BLOCKSIZE 16 //8 or 16 or 32
+__constant__ float d_param_ref[21]; //21 parameters for the reference camera
+__constant__ float d_param_cam[54]; //18 parameters * 3 cameras = 54
 __constant__ unsigned int d_width;
 __constant__ unsigned int d_height;
-
-// Those functions are an example on how to call cuda functions from the main.cpp
-__global__ void dev_test_vecAdd(int* A, int* B, int* C, int N)
-{
-	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= N) return;
-
-	C[i] = A[i] + B[i];
-}
-
-void wrap_test_vectorAdd() {
-	printf("Testing GPU with vector addition:\n");
-
-	int N = 3;
-	int a[] = { 1, 2, 3 };
-	int b[] = { 1, 2, 3 };
-	int c[] = { 0, 0, 0 };
-
-	int* dev_a, * dev_b, * dev_c;
-
-	cudaMalloc((void**)&dev_a, N * sizeof(int));
-	cudaMalloc((void**)&dev_b, N * sizeof(int));
-	cudaMalloc((void**)&dev_c, N * sizeof(int));
-
-	cudaMemcpy(dev_a, a, N * sizeof(int),
-		cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_b, b, N * sizeof(int),
-		cudaMemcpyHostToDevice);
-
-	dev_test_vecAdd <<<1, N>>> (dev_a, dev_b, dev_c, N);
-
-	cudaMemcpy(c, dev_c, N * sizeof(int),
-		cudaMemcpyDeviceToHost);
-
-	cudaDeviceSynchronize();
-
-	printf("%s\n", cudaGetErrorString(cudaGetLastError()));
-	
-	for (int i = 0; i < N; ++i) {
-		printf("%i + %i = %i\n", a[i], b[i], c[i]);
-	}
-	cudaFree(dev_a);
-	cudaFree(dev_b);
-	cudaFree(dev_c);
-}
 
 //Functions to time the kernel
 cudaEvent_t start_cuda_timer()
@@ -641,14 +596,9 @@ __global__ void shared_all_sweeping_plane_kernel(
 			int rx = lx + dx;
 			int ry = ly + dy;
 
-			//int px = px_base + dx;
-			//int py = py_base + dy;
-
 			//if (rx < 0 || ry < 0 || rx >= width || ry >= height) continue; //Don't need to verify because lx = tx + pad
 			//if (px < 0 || py < 0 || px >= d_width || py >= d_height) continue; //don't need to verify because lx = tx + pad
 
-			//float ref_val = (float)shared_ref[INDEX_2D(ry, rx, shared_width)];
-			//float cam_val = (float)shared_cam[INDEX_2D(ry, rx, shared_width)];
 			cost += fabsf(shared_ref[INDEX_2D(ry, rx, shared_width)] - shared_cam[INDEX_2D(ry, rx, shared_width)]);
 			count += 1.0f;
 		}
@@ -712,34 +662,6 @@ void wrap_plane_sweep(cam const ref, std::vector<cam> const &cam_vector, int z_p
 
 	// launch 1 kernel per camera
 	start = start_cuda_timer();
-	/*naive_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam1, d_param_ref, d_param_cam1, d_cost_volume, width, height, z_planes, window);
-	naive_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam2, d_param_ref, d_param_cam2, d_cost_volume, width, height, z_planes, window);
-	naive_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam3, d_param_ref, d_param_cam3, d_cost_volume, width, height, z_planes, window);*/
-	//end_cuda_timer(start, "Naive GPU");
-	/*params_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam1, d_cost_volume,0, width, height, z_planes, window);
-	params_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam2, d_cost_volume,1, width, height, z_planes, window);
-	params_sweeping_plane_kernel <<<grid_size, block_size>>> (
-		d_im_ref, d_im_cam3, d_cost_volume,2, width, height, z_planes, window);
-	end_cuda_timer(start, "Params optimized GPU");*/
-	/*shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam1, d_cost_volume, 0, z_planes, window);
-	shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam2, d_cost_volume, 1, z_planes, window);
-	shared_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam3, d_cost_volume, 2, z_planes, window);
-	end_cuda_timer(start, "Shared GPU");*/
-	/*shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam1, d_cost_volume, 0, width, height, z_planes, window);
-	shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam2, d_cost_volume, 1, width, height, z_planes, window);
-	shared_9blocks_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
-		d_im_ref, d_im_cam3, d_cost_volume, 2, width, height, z_planes, window);
-	end_cuda_timer(start, "Shared 9 blocks GPU");*/
 	shared_all_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (
 		d_im_ref, d_im_cam1, d_cost_volume, 0, z_planes, window);
 	shared_all_sweeping_plane_kernel <<<grid_size, block_size, shared_mem_size>>> (

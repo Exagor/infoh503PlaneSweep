@@ -287,9 +287,6 @@ int main()
 	// Read cams
 	std::vector<cam> cam_vector = read_cams("data");
 
-	// Test call a CUDA function
-	//wrap_test_vectorAdd();
-
 	/*-------------------------CPU version------------------------------*/
 #if DEVICE == 0
 	// Start the timer
@@ -304,7 +301,7 @@ int main()
 	/*---------------------------GPU naive version-------------------------------------*/
 #if DEVICE == 1
 
-	// Allocate a big float buffer for the cost volume and init it
+	// Allocate a big __half buffer for the cost volume and init it
 	__half* cost_volume = new __half[cam_vector.at(0).width * cam_vector.at(0).height * ZPlanes];//previous float
 
 #ifdef DEBUG
@@ -339,7 +336,7 @@ int main()
 	}
 #endif
 
-	// Convert flat buffer to cv::Mat cost_cube
+	// Convert flat buffer (__half) to cv::Mat cost_cube (float)
 	std::vector<cv::Mat> cost_cube(ZPlanes);
 	for (int zi = 0; zi < ZPlanes; ++zi) {
 		cost_cube[zi] = cv::Mat(cam_vector.at(0).height, cam_vector.at(0).width, CV_32FC1);
@@ -366,9 +363,9 @@ int main()
 	cv::Mat depth = find_min(cost_cube);
 #endif
 	// see the result
-	//cv::namedWindow("Depth", cv::WINDOW_NORMAL);
-	//cv::imshow("Depth", depth);
-	//cv::waitKey(0);
+	cv::namedWindow("Depth", cv::WINDOW_NORMAL);
+	cv::imshow("Depth", depth);
+	cv::waitKey(0);
 
 	cv::imwrite("../out/depth_map.png", depth);
 

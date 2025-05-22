@@ -18,6 +18,4 @@ do { \
 #define INDEX_3D(z, y, x, dimY, dimX) (((z) * (dimY) * (dimX)) + ((y) * (dimX)) + (x))
 
 // This is the public interface of our cuda function, called directly in main.cpp
-void wrap_test_vectorAdd();
-
 void wrap_plane_sweep(cam const ref, std::vector<cam> const& cam_vector, int z_planes, int window, __half* h_cost_volume);
